@@ -20,7 +20,7 @@ app.config['SECRET_KEY'] = 'hardtoguessstringfromsi364thisisnotsupersecure'
 ## TODO SI364: Create a database in postgresql in the code line below, and fill in your app's database URI. It should be of the format: postgresql://localhost/YOUR_DATABASE_NAME
 
 ## Your Postgres database should be your uniqname, plus HW4, e.g. "jczettaHW4" or "maupandeHW4"
-app.config["SQLALCHEMY_DATABASE_URI"] = ""
+app.config["SQLALCHEMY_DATABASE_URI"] = "postgresql://localhost/msettonHW4"
 app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -69,6 +69,24 @@ manager.add_command("shell", Shell(make_context=make_shell_context))
 
 ## NOTE: You'll have to set up database relationship code in either the Tweet table or the Hashtag table so that the association table for that many-many relationship will work properly!
 
+## set up the associations table between Tweet and Hashtag
+collections = db.Table('collections',db.Column('tweet_id',db.Integer, db.ForeignKey('Tweet.id')),db.Column('hashtag_id',db.Integer, db.ForeignKey('Hashtag.id')))
+
+class Tweet(db.Model):
+    __tablename__ = "Tweet"
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.String(285))
+    user_id = db.Column(db.Integer, db.ForeignKey('User.id'))
+class User(db.Model):
+    __tablename__ = 'User'
+    id = db.Column(db.Integer, primary_key=True)
+    twitter_username = db.Column(db.String(64),unique=True)
+
+class Hashtag(db.Model):
+    __tablename__ = 'Hashtag'
+    id = db.Column(db.Integer,primary_key=True)
+    text = db.Column(db.String(284),unique=True)
+
 
 ##### Set up Forms #####
 
@@ -79,7 +97,10 @@ manager.add_command("shell", Shell(make_context=make_shell_context))
 ## -- a list of comma-separated hashtags it should have
 
 class TweetForm(FlaskForm):
-    pass
+    text = StringField("What text would you like saved?", validators=[Required()])
+    username = StringField("Who should post it?", validators=[Required()])
+    hashtags = StringField("Insert a list of comma-separated values it should have", validators=[Required()])
+    submit = SubmitField('Submit')
 
 
 ##### Helper functions
@@ -94,10 +115,39 @@ class TweetForm(FlaskForm):
 ## HINT: Your get_or_create_tweet function should invoke your get_or_create_user function AND your get_or_create_hashtag function. You'll have seen an example similar to this in class!
 
 ## NOTE: If you choose to organize your code differently so it has the same effect of not encounting duplicates / identity errors, that is OK. But writing separate functions that may invoke one another is our primary suggestion.
+def get_or_create_user(db_session,user_name):
+    user = db_session.query(User).filter_by(twitter_username=user_name).first()
+    if user:
+        return user
+    else:
+        user = User(twitter_username=user_name)
+        db_session.add(user)
+        db_session.commit()
+        return user
 
+def get_or_create_hashtag(db_session,hashtag):
+    hashtag = db_session.query(Hashtag).filter_by(text=hashtag).first()
+    if hashtag:
+        return hashtag
+    else:
+        hashtag = Hashtag(text=hashtag)
+        db_session.add(hashtag)
+        db_session.commit()
+        return hashtag
 
-
-
+def get_or_create_tweet(db_session,tweet_text,user_name):
+    tweet = db_session.query(User).filter_by(twitter_username=user_name).fisrt()
+    if tweet:
+        return tweet
+    tweet = db_session.query(Tweet).filter_by(text=tweet_text).first()
+    if tweet:
+        return tweet
+    else:
+        user = get_or_create_user(db_session, user_name)
+        tweet = Tweet(text=tweet_text,user_id=user.id)
+        db_session.add(tweet)
+        db_session.commit()
+        return tweet
 
 ##### Set up Controllers (view functions) #####
 
@@ -115,16 +165,23 @@ def internal_server_error(e):
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    pass
     ## TODO SI364: Fill in the index route as described.
     # A template index.html has been created and provided to render what this route needs to show -- YOU just need to fill in this view function so it will work.
     ## HINT: Check out the index.html template to make sure you're sending it the data it needs.
-
-
     # The index route should:
     # - Show the Tweet form.
     # - If you enter a tweet with identical text and username to an existing tweet, it should redirect you to the list of all the tweets and a message that you've already saved a tweet like that.
-
+    tweets = Tweet.query.all()
+    num_tweets = len(tweets)
+    form = TweetForm()
+    if form.validate_on_submit():
+        username = db.session.query(User).filter_by(username=form.twitter_username.data)
+        if username:
+            if db.session.query(Tweet).filter_by(text=form.tweet_text.data,user_id=username.id):
+                flash("You've already saved a tweet with this username and text!")
+        get_or_create_tweet(db.session,form.tweet_text.data,form.twitter_username.data)
+        return redirect(url_for('see_all_tweets'))
+    return render_template('index.html', form=form, num_tweets=num_tweets)
     ## ^ HINT: Invoke your get_or_create_tweet function
     ## ^ HINT: Check out the get_flashed_messages setup in the songs app you saw in class
 
@@ -134,17 +191,31 @@ def index():
 
 @app.route('/all_tweets')
 def see_all_tweets():
-    pass
-
     # TODO SI364: Fill in this view function so that it can successfully render the template all_tweets.html, which is provided.
     ## HINT: Check out the all_songs and all_artists routes in the songs app you saw in class.
+    tweet_list = []
+    tweets = Tweet.query.all()
+    for t in tweets:
+        text = t.text
+        name = User.query.filter_by(id=t.id).first()
+        user_name = name.twitter_username
+        small_list = [text, user_name]
+        tweet_list.append(small_list)
+    return render_template('all_tweets.html', all_tweets=tweet_list)
 
 
 @app.route('/all_users')
 def see_all_users():
-
     # TODO SI364: Fill in this view function so it can successfully render the template all_users.html, which is provided. (See instructions for more detail.)
     ## HINT: Check out the all_songs and all_artists routes in the songs app you saw in class.
+    user_list = []
+    users = User.query.all()
+    for u in users:
+        user_id = u.id
+        user_tweets = db.session.query(Tweet).filter_by(user_id=user_id)
+        num = len(user_tweets)
+        user_list.append([u.twitter_username, num])
+    return render_template('all_users.html', usernames=user_list)
 
 
 if __name__ == '__main__':
